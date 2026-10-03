@@ -1,0 +1,28 @@
+From 3daac254656fe5bdbafa78ee0f5e826652a91c8e Mon Sep 17 00:00:00 2001
+From: Liam Girdwood <liam.r.girdwood@linux.intel.com>
+Date: Sat, 3 Oct 2026 10:36:15 +0100
+Subject: [PATCH] echo_control_mobile: use integer division in delay
+ compensation
+
+Avoid unnecessary floating-point conversion and multiplication in AECm
+by replacing 0.2 * msInSndCardBuf with integer division msInSndCardBuf / 5.
+---
+ webrtc/modules/audio_processing/aecm/echo_control_mobile.cc | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/webrtc/modules/audio_processing/aecm/echo_control_mobile.cc b/webrtc/modules/audio_processing/aecm/echo_control_mobile.cc
+index 14522c0..2b3906d 100644
+--- a/webrtc/modules/audio_processing/aecm/echo_control_mobile.cc
++++ b/webrtc/modules/audio_processing/aecm/echo_control_mobile.cc
+@@ -312,7 +312,7 @@ int32_t WebRtcAecm_Process(void* aecmInst,
+       }
+ 
+       if (abs(aecm->firstVal - aecm->msInSndCardBuf) <
+-          WEBRTC_SPL_MAX(0.2 * aecm->msInSndCardBuf, kSampMsNb)) {
++          WEBRTC_SPL_MAX(aecm->msInSndCardBuf / 5, kSampMsNb)) {
+         aecm->sum += aecm->msInSndCardBuf;
+         aecm->counter++;
+       } else {
+-- 
+2.53.0
+
