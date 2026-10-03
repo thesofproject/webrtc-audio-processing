@@ -312,7 +312,7 @@ int32_t WebRtcAecm_Process(void* aecmInst,
       }
 
       if (abs(aecm->firstVal - aecm->msInSndCardBuf) <
-          WEBRTC_SPL_MAX(0.2 * aecm->msInSndCardBuf, kSampMsNb)) {
+          WEBRTC_SPL_MAX(aecm->msInSndCardBuf / 5, kSampMsNb)) {
         aecm->sum += aecm->msInSndCardBuf;
         aecm->counter++;
       } else {
