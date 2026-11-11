@@ -22,7 +22,7 @@
 enum {
   kExtendedNumPartitions = 32
 };
-static const int kNormalNumPartitions = 2;
+static const int kNormalNumPartitions = 12;
 
 // Delay estimator constants, used for logging and delay compensation if
 // if reported delays are disabled.
