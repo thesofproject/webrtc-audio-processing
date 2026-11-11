@@ -40,7 +40,8 @@
 #endif
 
 // Buffer size (samples)
-static const size_t kBufSizePartitions = 250;  // 1 second of audio in 16 kHz.
+// 128 ms: covers a <= 15 ms reported delay plus the 60 ms startup fill.
+static const size_t kBufSizePartitions = 32;
 
 // Metrics
 static const int subCountLen = 4;
