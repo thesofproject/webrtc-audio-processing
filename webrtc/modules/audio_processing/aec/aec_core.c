@@ -34,6 +34,10 @@
 #include "webrtc/system_wrappers/include/cpu_features_wrapper.h"
 #include "webrtc/typedefs.h"
 
+// Output the linear filter error without residual echo suppression (NLP).
+#ifndef WEBRTC_AEC_LINEAR_ONLY
+#define WEBRTC_AEC_LINEAR_ONLY 1
+#endif
 
 // Buffer size (samples)
 static const size_t kBufSizePartitions = 250;  // 1 second of audio in 16 kHz.
@@ -144,6 +148,9 @@ __inline static float MulIm(float aRe, float aIm, float bRe, float bIm) {
   return aRe * bIm + aIm * bRe;
 }
 
+#if WEBRTC_AEC_LINEAR_ONLY
+__attribute__((unused))
+#endif
 static int CmpFloat(const void* a, const void* b) {
   const float* da = (const float*)a;
   const float* db = (const float*)b;
@@ -942,6 +949,9 @@ static int SignalBasedDelayCorrection(AecCore* self) {
   return delay_correction;
 }
 
+#if WEBRTC_AEC_LINEAR_ONLY
+__attribute__((unused))
+#endif
 static void NonLinearProcessing(AecCore* aec,
                                 float* output,
                                 float* const* outputH) {
@@ -1367,7 +1377,15 @@ static void ProcessBlock(AecCore* aec) {
   // Scale error signal inversely with far power.
   WebRtcAec_ScaleErrorSignal(aec, ef);
   WebRtcAec_FilterAdaptation(aec, fft, ef);
+#if WEBRTC_AEC_LINEAR_ONLY
+  for (i = 0; i < PART_LEN; i++) {
+    output[i] = WEBRTC_SPL_SAT(WEBRTC_SPL_WORD16_MAX, e[i], WEBRTC_SPL_WORD16_MIN);
+  }
+  memcpy(aec->dBuf, aec->dBuf + PART_LEN, sizeof(float) * PART_LEN);
+  memcpy(aec->eBuf, aec->eBuf + PART_LEN, sizeof(float) * PART_LEN);
+#else
   NonLinearProcessing(aec, output, outputH_ptr);
+#endif
 
   if (aec->metricsMode == 1) {
     // Update power levels and echo metrics
