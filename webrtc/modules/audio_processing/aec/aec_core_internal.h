@@ -27,11 +27,11 @@ static const int kNormalNumPartitions = 12;
 // Delay estimator constants, used for logging and delay compensation if
 // if reported delays are disabled.
 enum {
-  kLookaheadBlocks = 15
+  kLookaheadBlocks = 4
 };
 enum {
-  // 500 ms for 16 kHz which is equivalent with the limit of reported delays.
-  kHistorySizeBlocks = 125
+  // -16 ms .. +48 ms around the alignment, i.e. the normal filter span.
+  kHistorySizeBlocks = 16
 };
 
 // Extended filter adaptation parameters.

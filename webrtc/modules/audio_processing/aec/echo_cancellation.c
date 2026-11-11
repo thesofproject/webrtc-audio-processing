@@ -91,7 +91,7 @@ static const int kMaxTrustedDelayMs = 500;
 // TODO(bjornv): Replace with kResamplerBufferSize
 #define MAX_RESAMP_LEN (5 * FRAME_LEN)
 
-static const int kMaxBufSizeStart = 62;  // In partitions
+static const int kMaxBufSizeStart = 8;  // In partitions
 static const int sampMsNb = 8;           // samples per ms in nb
 static const int initCheck = 42;
 
