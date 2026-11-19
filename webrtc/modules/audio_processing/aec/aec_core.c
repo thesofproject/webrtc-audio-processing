@@ -34,9 +34,19 @@
 #include "webrtc/system_wrappers/include/cpu_features_wrapper.h"
 #include "webrtc/typedefs.h"
 
+// Output the linear filter error without residual echo suppression (NLP).
+#ifndef WEBRTC_AEC_LINEAR_ONLY
+#define WEBRTC_AEC_LINEAR_ONLY 1
+#endif
+
+/* Filter adaptation step size for 16 kHz and above, upstream 0.5 */
+#ifndef WEBRTC_AEC_NORMAL_MU
+#define WEBRTC_AEC_NORMAL_MU 0.3f
+#endif
 
 // Buffer size (samples)
-static const size_t kBufSizePartitions = 250;  // 1 second of audio in 16 kHz.
+// 128 ms: covers a <= 15 ms reported delay plus the 60 ms startup fill.
+static const size_t kBufSizePartitions = 32;
 
 // Metrics
 static const int subCountLen = 4;
@@ -144,6 +154,9 @@ __inline static float MulIm(float aRe, float aIm, float bRe, float bIm) {
   return aRe * bIm + aIm * bRe;
 }
 
+#if WEBRTC_AEC_LINEAR_ONLY
+__attribute__((unused))
+#endif
 static int CmpFloat(const void* a, const void* b) {
   const float* da = (const float*)a;
   const float* db = (const float*)b;
@@ -253,13 +266,24 @@ static void FilterAdaptation(AecCore* aec, float* fft, float ef[2][PART_LEN1]) {
                    ef[0][PART_LEN],
                    ef[1][PART_LEN]);
 
-    const float u_scale = 1.0f / PART_LEN2;
-    aec->wfBuf[0][pos] += fft[0] * u_scale;
-    aec->wfBuf[0][pos + PART_LEN] += fft[1] * u_scale;
+    aec_rdft_inverse_128(fft);
+    memset(fft + PART_LEN, 0, sizeof(float) * PART_LEN);
+
+    // fft scaling
+    {
+      float scale = 2.0f / PART_LEN2;
+      for (j = 0; j < PART_LEN; j++) {
+        fft[j] *= scale;
+      }
+    }
+    aec_rdft_forward_128(fft);
+
+    aec->wfBuf[0][pos] += fft[0];
+    aec->wfBuf[0][pos + PART_LEN] += fft[1];
 
     for (j = 1; j < PART_LEN; j++) {
-      aec->wfBuf[0][pos + j] += fft[2 * j] * u_scale;
-      aec->wfBuf[1][pos + j] += fft[2 * j + 1] * u_scale;
+      aec->wfBuf[0][pos + j] += fft[2 * j];
+      aec->wfBuf[1][pos + j] += fft[2 * j + 1];
     }
   }
 }
@@ -931,6 +955,9 @@ static int SignalBasedDelayCorrection(AecCore* self) {
   return delay_correction;
 }
 
+#if WEBRTC_AEC_LINEAR_ONLY
+__attribute__((unused))
+#endif
 static void NonLinearProcessing(AecCore* aec,
                                 float* output,
                                 float* const* outputH) {
@@ -1233,9 +1260,13 @@ static void ProcessBlock(AecCore* aec) {
                    (xf_ptr[PART_LEN1 + i] * xf_ptr[PART_LEN1 + i]);
     aec->xPow[i] =
         gPow[0] * aec->xPow[i] + gPow[1] * aec->num_partitions * far_spectrum;
+    // Calculate absolute spectra
+    abs_far_spectrum[i] = sqrtf(far_spectrum);
 
     near_spectrum = df[0][i] * df[0][i] + df[1][i] * df[1][i];
     aec->dPow[i] = gPow[0] * aec->dPow[i] + gPow[1] * near_spectrum;
+    // Calculate absolute spectra
+    abs_near_spectrum[i] = sqrtf(near_spectrum);
   }
 
   // Estimate noise power. Wait until dPow is more stable.
@@ -1269,11 +1300,6 @@ static void ProcessBlock(AecCore* aec) {
 
   // Block wise delay estimation used for logging
   if (aec->delay_logging_enabled) {
-    for (i = 0; i < PART_LEN1; i++) {
-      abs_far_spectrum[i] = sqrtf((xf_ptr[i] * xf_ptr[i]) +
-                                  (xf_ptr[PART_LEN1 + i] * xf_ptr[PART_LEN1 + i]));
-      abs_near_spectrum[i] = sqrtf(df[0][i] * df[0][i] + df[1][i] * df[1][i]);
-    }
     if (WebRtc_AddFarSpectrumFloat(
             aec->delay_estimator_farend, abs_far_spectrum, PART_LEN1) == 0) {
       int delay_estimate = WebRtc_DelayEstimatorProcessFloat(
@@ -1357,14 +1383,40 @@ static void ProcessBlock(AecCore* aec) {
   // Scale error signal inversely with far power.
   WebRtcAec_ScaleErrorSignal(aec, ef);
   WebRtcAec_FilterAdaptation(aec, fft, ef);
+#if WEBRTC_AEC_LINEAR_ONLY
+  {
+    // Divergence safeguard of SmoothedPSD(), which runs only with the NLP.
+    const float* ptrGCoh = aec->extended_filter_enabled
+        ? WebRtcAec_kExtendedSmoothingCoefficients[aec->mult - 1]
+        : WebRtcAec_kNormalSmoothingCoefficients[aec->mult - 1];
+    const float* src;
+    float dEn = 0, eEn = 0;
 
-  // Direct linear echo cancellation (eliminates NLP FFTs & transcendental math)
-  for (i = 0; i < PART_LEN; i++) {
-    output[i] = WEBRTC_SPL_SAT(
-        WEBRTC_SPL_WORD16_MAX, e[i], WEBRTC_SPL_WORD16_MIN);
+    for (i = 0; i < PART_LEN; i++) {
+      dEn += nearend_ptr[i] * nearend_ptr[i];
+      eEn += e[i] * e[i];
+    }
+    aec->linSd = ptrGCoh[0] * aec->linSd + ptrGCoh[1] * dEn;
+    aec->linSe = ptrGCoh[0] * aec->linSe + ptrGCoh[1] * eEn;
+
+    aec->divergeState =
+        (aec->divergeState ? 1.05f : 1.0f) * aec->linSe > aec->linSd;
+    src = aec->divergeState ? nearend_ptr : e;
+
+    // Reset if error is significantly larger than nearend (13 dB).
+    if (!aec->extended_filter_enabled && aec->linSe > 19.95f * aec->linSd)
+      memset(aec->wfBuf, 0, sizeof(aec->wfBuf));
+
+    for (i = 0; i < PART_LEN; i++) {
+      output[i] = WEBRTC_SPL_SAT(WEBRTC_SPL_WORD16_MAX, src[i],
+                                 WEBRTC_SPL_WORD16_MIN);
+    }
   }
   memcpy(aec->dBuf, aec->dBuf + PART_LEN, sizeof(float) * PART_LEN);
   memcpy(aec->eBuf, aec->eBuf + PART_LEN, sizeof(float) * PART_LEN);
+#else
+  NonLinearProcessing(aec, output, outputH_ptr);
+#endif
 
   if (aec->metricsMode == 1) {
     // Update power levels and echo metrics
@@ -1539,7 +1591,7 @@ int WebRtcAec_InitAec(AecCore* aec, int sampFreq) {
     aec->normal_error_threshold = 2e-6f;
     aec->num_bands = 1;
   } else {
-    aec->normal_mu = 0.5f;
+    aec->normal_mu = WEBRTC_AEC_NORMAL_MU;
     aec->normal_error_threshold = 1.5e-6f;
     aec->num_bands = (size_t)(sampFreq / 16000);
   }
@@ -1686,6 +1738,8 @@ int WebRtcAec_InitAec(AecCore* aec, int sampFreq) {
   aec->stNearState = 0;
   aec->echoState = 0;
   aec->divergeState = 0;
+  aec->linSd = 1;
+  aec->linSe = 0;
 
   aec->seed = 777;
   aec->delayEstCtr = 0;
