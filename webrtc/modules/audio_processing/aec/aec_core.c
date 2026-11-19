@@ -39,6 +39,11 @@
 #define WEBRTC_AEC_LINEAR_ONLY 1
 #endif
 
+/* Filter adaptation step size for 16 kHz and above, upstream 0.5 */
+#ifndef WEBRTC_AEC_NORMAL_MU
+#define WEBRTC_AEC_NORMAL_MU 0.3f
+#endif
+
 // Buffer size (samples)
 // 128 ms: covers a <= 15 ms reported delay plus the 60 ms startup fill.
 static const size_t kBufSizePartitions = 32;
@@ -1586,7 +1591,7 @@ int WebRtcAec_InitAec(AecCore* aec, int sampFreq) {
     aec->normal_error_threshold = 2e-6f;
     aec->num_bands = 1;
   } else {
-    aec->normal_mu = 0.5f;
+    aec->normal_mu = WEBRTC_AEC_NORMAL_MU;
     aec->normal_error_threshold = 1.5e-6f;
     aec->num_bands = (size_t)(sampFreq / 16000);
   }
