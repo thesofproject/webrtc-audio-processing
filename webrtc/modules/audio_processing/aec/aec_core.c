@@ -1379,8 +1379,33 @@ static void ProcessBlock(AecCore* aec) {
   WebRtcAec_ScaleErrorSignal(aec, ef);
   WebRtcAec_FilterAdaptation(aec, fft, ef);
 #if WEBRTC_AEC_LINEAR_ONLY
-  for (i = 0; i < PART_LEN; i++) {
-    output[i] = WEBRTC_SPL_SAT(WEBRTC_SPL_WORD16_MAX, e[i], WEBRTC_SPL_WORD16_MIN);
+  {
+    // Divergence safeguard of SmoothedPSD(), which runs only with the NLP.
+    const float* ptrGCoh = aec->extended_filter_enabled
+        ? WebRtcAec_kExtendedSmoothingCoefficients[aec->mult - 1]
+        : WebRtcAec_kNormalSmoothingCoefficients[aec->mult - 1];
+    const float* src;
+    float dEn = 0, eEn = 0;
+
+    for (i = 0; i < PART_LEN; i++) {
+      dEn += nearend_ptr[i] * nearend_ptr[i];
+      eEn += e[i] * e[i];
+    }
+    aec->linSd = ptrGCoh[0] * aec->linSd + ptrGCoh[1] * dEn;
+    aec->linSe = ptrGCoh[0] * aec->linSe + ptrGCoh[1] * eEn;
+
+    aec->divergeState =
+        (aec->divergeState ? 1.05f : 1.0f) * aec->linSe > aec->linSd;
+    src = aec->divergeState ? nearend_ptr : e;
+
+    // Reset if error is significantly larger than nearend (13 dB).
+    if (!aec->extended_filter_enabled && aec->linSe > 19.95f * aec->linSd)
+      memset(aec->wfBuf, 0, sizeof(aec->wfBuf));
+
+    for (i = 0; i < PART_LEN; i++) {
+      output[i] = WEBRTC_SPL_SAT(WEBRTC_SPL_WORD16_MAX, src[i],
+                                 WEBRTC_SPL_WORD16_MIN);
+    }
   }
   memcpy(aec->dBuf, aec->dBuf + PART_LEN, sizeof(float) * PART_LEN);
   memcpy(aec->eBuf, aec->eBuf + PART_LEN, sizeof(float) * PART_LEN);
@@ -1708,6 +1733,8 @@ int WebRtcAec_InitAec(AecCore* aec, int sampFreq) {
   aec->stNearState = 0;
   aec->echoState = 0;
   aec->divergeState = 0;
+  aec->linSd = 1;
+  aec->linSe = 0;
 
   aec->seed = 777;
   aec->delayEstCtr = 0;

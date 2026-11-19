@@ -92,6 +92,8 @@ struct AecCore {
 
   short stNearState, echoState;
   short divergeState;
+  // Smoothed near-end and error block energy for the linear-only output.
+  float linSd, linSe;
 
   int xfBufBlockPos;
 
